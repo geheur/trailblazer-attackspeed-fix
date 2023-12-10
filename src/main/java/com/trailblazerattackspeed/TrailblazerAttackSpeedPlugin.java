@@ -4,6 +4,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
 import javax.inject.Inject;
+import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.Client;
 import net.runelite.api.Player;
@@ -42,7 +43,7 @@ public class TrailblazerAttackSpeedPlugin extends Plugin
 	{
 		clientThread.invokeLater(() -> {
 			client.getAnimationCache().reset();
-			lastPlayerLocations.clear();
+			playerDataMap.clear();
 		});
 	}
 
@@ -53,12 +54,18 @@ public class TrailblazerAttackSpeedPlugin extends Plugin
 			e.getAnimation().setRestartMode(1);
 		}
 	}
+	
+	@Data
+	private static final class PlayerData {
+		WorldPoint lastLocation = null;
+		int lastAnimation = -1;
+	}
 
-	private final Map<Player, WorldPoint> lastPlayerLocations = new HashMap<>();
+	private final Map<Player, PlayerData> playerDataMap = new HashMap<>();
 
 	@Subscribe
 	public void onPlayerDespawned(PlayerDespawned e) {
-		lastPlayerLocations.remove(e.getPlayer());
+		playerDataMap.remove(e.getPlayer());
 	}
 
 	@Subscribe
@@ -67,13 +74,25 @@ public class TrailblazerAttackSpeedPlugin extends Plugin
 		{
 			for (Player player : client.getPlayers())
 			{
-				WorldPoint worldPoint = lastPlayerLocations.get(player);
-				if (worldPoint != null && !worldPoint.equals(player.getWorldLocation()) && needToBeClipped.contains(player.getAnimation()))
+				PlayerData playerData = getPlayerData(player);
+				WorldPoint worldPoint = playerData.lastLocation;
+				if (!player.getWorldLocation().equals(worldPoint) && playerData.lastAnimation == player.getAnimation() && needToBeClipped.contains(player.getAnimation()))
 				{
 					player.setAnimation(-1);
 				}
-				lastPlayerLocations.put(player, player.getWorldLocation());
+				playerData.lastLocation = player.getWorldLocation();
+				playerData.lastAnimation = player.getAnimation();
 			}
 		}
+	}
+
+	private PlayerData getPlayerData(Player player)
+	{
+		PlayerData playerData = playerDataMap.get(player);
+		if (playerData == null) {
+			playerData = new PlayerData();
+			playerDataMap.put(player, playerData);
+		}
+		return playerData;
 	}
 }
