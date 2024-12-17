@@ -1,11 +1,15 @@
 package com.trailblazerattackspeed;
 
+import com.google.inject.Provides;
+import java.awt.Color;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
 import javax.inject.Inject;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
+import net.runelite.api.ChatMessageType;
 import net.runelite.api.Client;
 import net.runelite.api.Player;
 import net.runelite.api.WorldType;
@@ -14,9 +18,13 @@ import net.runelite.api.events.GameTick;
 import net.runelite.api.events.PlayerDespawned;
 import net.runelite.api.events.PostAnimation;
 import net.runelite.client.callback.ClientThread;
+import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.Subscribe;
+import net.runelite.client.events.ConfigChanged;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
+import net.runelite.client.util.ColorUtil;
+import net.runelite.client.util.Text;
 
 @Slf4j
 @PluginDescriptor(
@@ -27,15 +35,46 @@ public class TrailblazerAttackSpeedPlugin extends Plugin
 {
 	@Inject private Client client;
 	@Inject private ClientThread clientThread;
+	@Inject private TrailblazerAttackSpeedConfig config;
 
-	private static final Set<Integer> animations = Set.of(710,711,716,717,718,724,727,728,729,9206,245,376,377,380,381,382,386,390,391,393,395,400,401,406,407,414,419,422,423,426,428,429,438,440,708,723,811,1056,1058,1060,1062,1064,1067,1068,1074,1132,1161,1162,1163,1164,1165,1166,1167,1168,1169,1203,1378,1428,1576,1658,1665,1667,1710,1711,1712,1833,1872,1978,1979,2062,2066,2067,2068,2075,2080,2081,2082,2323,2661,2876,2890,3157,3294,3297,3298,3299,3300,3678,3852,4230,4503,4505,5061,5063,5439,5865,5870,6118,6147,6278,7004,7045,7046,7054,7055,7275,7328,7511,7512,7514,7515,7516,7521,7541,7552,7554,7555,7556,7558,7617,7618,7638,7640,7642,7644,7855,8010,8056,8145,8194,8195,8209,8288,8289,8290,8291,8292,8972,8974,8977,9168,9171,9173,9347,9471,9493,9848,9858,9961,9962,9963,9964,10078,10079,10171,10172,10173,10501);
+	private Set<Integer> animations = null;
 	// These animations all stall the player. some must be clipped because they are longer than the cast speed, others are long enough that it makes the character fall behind.
-	private static final Set<Integer> needToBeClipped = Set.of(710,711,716,717,718,724,727,728,729,708,1162,1161,1163,1978,1979,4230,5439,1164,1165,1166,1167,1168,1169,1576,2323,3852,6118,7855,8209);
+	private Set<Integer> needToBeClipped = null;
+	private boolean leaguesWorldsOnly = false;
+	private boolean clipAnimations = false;
+	private boolean restartAll = false;
+
+	@Provides public TrailblazerAttackSpeedConfig provideConfig(ConfigManager configManager) {
+		return configManager.getConfig(TrailblazerAttackSpeedConfig.class);
+	}
 
 	@Override
-	protected void startUp()
+	protected void startUp() {
+		clientThread.invokeLater(this::loadConfig);
+	}
+
+	@Subscribe public void onConfigChanged(ConfigChanged e) {
+		if (e.getGroup().equals("trailblazerattackspeed")) {
+			clientThread.invokeLater(this::loadConfig);
+		}
+	}
+
+	private void loadConfig()
 	{
-		clientThread.invokeLater(() -> client.getAnimationCache().reset());
+		try
+		{
+			leaguesWorldsOnly = !config.normalWorldsToo();
+			clipAnimations = config.clippableAnimationsEnabled();
+			restartAll = config.restartAll();
+			animations = Text.fromCSV(config.restartableAnimations()).stream().map(Integer::parseInt).collect(Collectors.toSet());
+			needToBeClipped = Text.fromCSV(config.clippableAnimations()).stream().map(Integer::parseInt).collect(Collectors.toSet());
+			client.getAnimationCache().reset();
+		} catch (NumberFormatException e) {
+			client.addChatMessage(ChatMessageType.GAMEMESSAGE, "bla", ColorUtil.wrapWithColorTag("You entered something that wasn't a number in the trailblazer attack speed plugin's config. Please fix it or the plugin will not work.", Color.RED), "bla");
+			// prevent NPEs.
+			needToBeClipped = Set.of();
+			animations = Set.of();
+		}
 	}
 
 	@Override
@@ -44,13 +83,15 @@ public class TrailblazerAttackSpeedPlugin extends Plugin
 		clientThread.invokeLater(() -> {
 			client.getAnimationCache().reset();
 			playerDataMap.clear();
+			animations = null;
+			needToBeClipped = null;
 		});
 	}
 
 	@Subscribe
 	public void onPostAnimation(PostAnimation e)
 	{
-		if (animations.contains(e.getAnimation().getId())) {
+		if (restartAll || animations.contains(e.getAnimation().getId())) {
 			e.getAnimation().setRestartMode(1);
 		}
 	}
@@ -70,7 +111,7 @@ public class TrailblazerAttackSpeedPlugin extends Plugin
 
 	@Subscribe
 	public void onGameTick(GameTick e) {
-		if (client.getWorldType().contains(WorldType.SEASONAL))
+		if (clipAnimations && (!leaguesWorldsOnly || client.getWorldType().contains(WorldType.SEASONAL)))
 		{
 			for (Player player : client.getPlayers())
 			{
